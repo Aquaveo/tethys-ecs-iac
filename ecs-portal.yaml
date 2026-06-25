@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Tethys portal - web task def + Fargate service. One task runs two containers: an init container
+  (essential:false, runs init-tethys.sh then exits) and the web container (uvicorn). The portal is
+  STATELESS: DB on the external pooler, static/media on S3 via django-storages, no EFS, no Redis/valkey
+  (in-memory channel layer; websockets unused). Secrets come from SSM /<Org>/<App>/*. Imports cluster /
+  roles / network exports from the ${Org}-${App}-{cluster,roles,network} stacks.
+
+Parameters:
+  Org:
+    Type: String
+  App:
+    Type: String
+    Default: portal
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+  ImageUri:
+    Type: String
+    Description: Full ECR image URI:tag for the portal (the tag = INIT_VERSION = static prefix).
+  TaskCpu:
+    Type: String
+    Default: "2048"
+  TaskMemory:
+    Type: String
+    Default: "8192"
+  DesiredCount:
+    Type: Number
+    Default: 1
+  AsgiProcesses:
+    Type: String
+    Default: "2"
+  ServiceSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets to run the task in (public subnets so it can pull from ECR without a NAT).
+  AssignPublicIp:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+  # ---- database (Supabase pooler) ----
+  DbHost:
+    Type: String
+    Description: Supabase pooler host, e.g. aws-1-us-east-1.pooler.supabase.com
+  DbUserName:
+    Type: String
+    Description: Pooler username form tethys_default.<PROJECT_REF>
+  DbName:
+    Type: String
+    Default: tethys_platform
+  DbPort:
+    Type: Number
+    Default: 5432
+  PoolerPort:
+    Type: Number
+    Default: 6543
+  InitVersion:
+    Type: String
+    Description: run-once guard key AND S3 static release prefix. Set to the image tag.
+  # ---- static / CDN ----
+  StaticBucket:
+    Type: String
+  CloudFrontDomain:
+    Type: String
+  WebPort:
+    Type: Number
+    Default: 8000
+  PortalAllowedHosts:
+    Type: String
+    Default: ""
+    Description: >
+      Comma-separated extra Django ALLOWED_HOSTS (the ALB DNS name and your public domain). The
+      task's own private IP is auto-added at startup for the ALB health check, so no '*' is needed.
+
+Resources:
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${Org}-${App}-web"
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: { Fn::ImportValue: !Sub "${Org}-${App}-roles-ExecRoleArn" }
+      TaskRoleArn: { Fn::ImportValue: !Sub "${Org}-${App}-roles-TaskRoleArn" }
+      ContainerDefinitions:
+        # ---- init (runs once per task start, then exits) ----------------------------------------
+        - Name: init
+          Image: !Ref ImageUri
+          Essential: false
+          Command: ["/usr/local/bin/init-tethys.sh"]
+          Environment:
+            # Tethys' admin module runs a DB query at import/ready() time; under uvicorn's ASGI
+            # startup that's an async context, which Django blocks. Allow it during setup.
+            - { Name: DJANGO_ALLOW_ASYNC_UNSAFE, Value: "true" }
+            - { Name: PORTAL_ALLOWED_HOSTS, Value: !Ref PortalAllowedHosts }
+            - { Name: TETHYS_DB_ENGINE, Value: django.db.backends.postgresql }
+            - { Name: TETHYS_DB_NAME, Value: !Ref DbName }
+            - { Name: TETHYS_DB_HOST, Value: !Ref DbHost }
+            - { Name: TETHYS_DB_PORT, Value: !Ref DbPort }
+            - { Name: TETHYS_DB_USERNAME, Value: !Ref DbUserName }
+            - { Name: TETHYS_POOLER_HOST, Value: !Ref DbHost }
+            - { Name: TETHYS_POOLER_PORT, Value: !Ref PoolerPort }
+            - { Name: DISABLE_SERVER_SIDE_CURSORS, Value: "true" }
+            - { Name: TETHYS_PORT, Value: !Ref WebPort }
+            - { Name: ASGI_PROCESSES, Value: !Ref AsgiProcesses }
+            - { Name: INIT_VERSION, Value: !Ref InitVersion }
+            - { Name: AWS_REGION, Value: !Ref AWS::Region }
+            - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
+            - { Name: STATIC_S3_BUCKET, Value: !Ref StaticBucket }
+            - { Name: STATIC_CLOUDFRONT_DOMAIN, Value: !Ref CloudFrontDomain }
+            - { Name: POSTGIS_SERVICE_NAME, Value: primary_postgis }
+            - { Name: GEOGLOWS_CACHE_BACKEND, Value: s3 }
+            - { Name: GEOGLOWS_CACHE_BUCKET, Value: !Ref StaticBucket }
+            - { Name: GEOGLOWS_CACHE_PREFIX, Value: cache/geoglows }
+            - { Name: PORTAL_SUPERUSER_NAME, Value: admin }
+          Secrets:
+            - { Name: TETHYS_DB_PASSWORD, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/db-password" }
+            - { Name: TETHYS_PS_CONNECTION, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/ps-connection" }
+            - { Name: TETHYS_SECRET_KEY, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/secret-key" }
+            - { Name: PORTAL_SUPERUSER_PASSWORD, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/portal-superuser-password" }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: { Fn::ImportValue: !Sub "${Org}-${App}-cluster-PortalLogGroup" }
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: init
+
+        # ---- web (uvicorn) ----------------------------------------------------------------------
+        - Name: web
+          Image: !Ref ImageUri
+          Essential: true
+          Command: ["/usr/local/bin/start-uvicorn.sh"]
+          DependsOn:
+            - { ContainerName: init, Condition: SUCCESS }
+          PortMappings:
+            - ContainerPort: !Ref WebPort
+              Protocol: tcp
+          Environment:
+            # Tethys' admin module runs a DB query at import/ready() time; under uvicorn's ASGI
+            # startup that's an async context, which Django blocks. Allow it during setup.
+            - { Name: DJANGO_ALLOW_ASYNC_UNSAFE, Value: "true" }
+            - { Name: PORTAL_ALLOWED_HOSTS, Value: !Ref PortalAllowedHosts }
+            - { Name: TETHYS_DB_ENGINE, Value: django.db.backends.postgresql }
+            - { Name: TETHYS_DB_NAME, Value: !Ref DbName }
+            - { Name: TETHYS_DB_HOST, Value: !Ref DbHost }
+            - { Name: TETHYS_DB_PORT, Value: !Ref DbPort }
+            - { Name: TETHYS_DB_USERNAME, Value: !Ref DbUserName }
+            - { Name: TETHYS_POOLER_HOST, Value: !Ref DbHost }
+            - { Name: TETHYS_POOLER_PORT, Value: !Ref PoolerPort }
+            - { Name: DISABLE_SERVER_SIDE_CURSORS, Value: "true" }
+            - { Name: TETHYS_PORT, Value: !Ref WebPort }
+            - { Name: ASGI_PROCESSES, Value: !Ref AsgiProcesses }
+            - { Name: INIT_VERSION, Value: !Ref InitVersion }
+            - { Name: AWS_REGION, Value: !Ref AWS::Region }
+            - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
+            - { Name: STATIC_S3_BUCKET, Value: !Ref StaticBucket }
+            - { Name: STATIC_CLOUDFRONT_DOMAIN, Value: !Ref CloudFrontDomain }
+            - { Name: POSTGIS_SERVICE_NAME, Value: primary_postgis }
+            - { Name: GEOGLOWS_CACHE_BACKEND, Value: s3 }
+            - { Name: GEOGLOWS_CACHE_BUCKET, Value: !Ref StaticBucket }
+            - { Name: GEOGLOWS_CACHE_PREFIX, Value: cache/geoglows }
+          Secrets:
+            - { Name: TETHYS_DB_PASSWORD, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/db-password" }
+            - { Name: TETHYS_PS_CONNECTION, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/ps-connection" }
+            - { Name: TETHYS_SECRET_KEY, ValueFrom: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Org}/${App}/secret-key" }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: { Fn::ImportValue: !Sub "${Org}-${App}-cluster-PortalLogGroup" }
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+      Tags:
+        - { Key: project, Value: !Sub "${Org}-${App}" }
+        - { Key: env, Value: !Ref Environment }
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub "${Org}-${App}-web"
+      Cluster: { Fn::ImportValue: !Sub "${Org}-${App}-cluster-ClusterArn" }
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      HealthCheckGracePeriodSeconds: 180
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref ServiceSubnets
+          SecurityGroups:
+            - { Fn::ImportValue: !Sub "${Org}-${App}-network-WebSG" }
+          AssignPublicIp: !Ref AssignPublicIp
+      LoadBalancers:
+        - TargetGroupArn: { Fn::ImportValue: !Sub "${Org}-${App}-network-PortalTG" }
+          ContainerName: web
+          ContainerPort: !Ref WebPort
+      PropagateTags: SERVICE
+      Tags:
+        - { Key: project, Value: !Sub "${Org}-${App}" }
+        - { Key: env, Value: !Ref Environment }
+
+Outputs:
+  ServiceName: { Value: !GetAtt Service.Name }
+  TaskDefinitionArn: { Value: !Ref TaskDefinition }

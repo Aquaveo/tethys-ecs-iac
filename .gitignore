@@ -1,0 +1,3 @@
+# Per-org parameter files hold real account IDs; only *.example.json is committed.
+parameters/*.json
+!parameters/*.example.json

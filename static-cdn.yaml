@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Tethys portal - private S3 bucket + CloudFront (Origin Access Control) for the static files. The
+  bucket is PRIVATE (Block Public Access on); only this CloudFront distribution can read it (via OAC
+  + a scoped bucket policy). django-storages uploads collected static under a per-release prefix; the
+  portal emits CloudFront URLs (STATIC_CLOUDFRONT_DOMAIN).
+
+Parameters:
+  Org:
+    Type: String
+    Description: Organization short name (e.g. acme); used only for resource tags.
+  App:
+    Type: String
+    Default: portal
+  BucketName:
+    Type: String
+    Description: Globally-unique S3 bucket name (must match STATIC_S3_BUCKET in the portal env).
+  AlbDomainName:
+    Type: String
+    Description: Portal ALB DNS name (CloudFront default origin); e.g. my-portal-alb-123.us-east-1.elb.amazonaws.com
+  PortalDomain:
+    Type: String
+    Default: ""
+    Description: Public domain for the portal (CloudFront alternate domain), e.g. enee.geoglows.org. Empty = use the *.cloudfront.net domain only.
+  AcmCertificateArn:
+    Type: String
+    Default: ""
+    Description: ACM cert ARN (us-east-1) for PortalDomain. Required if PortalDomain is set.
+  PriceClass:
+    Type: String
+    Default: PriceClass_100
+    AllowedValues: [PriceClass_100, PriceClass_200, PriceClass_All]
+    Description: CloudFront edge coverage (100 = NA/EU only, cheapest).
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref PortalDomain, ""]]
+
+Resources:
+  StaticBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          # Plot-data cache (geoglows plugin, GEOGLOWS_CACHE_PREFIX) is daily + regenerable; expire it.
+          - Id: expire-geoglows-cache
+            Status: Enabled
+            Prefix: cache/geoglows/
+            ExpirationInDays: 7
+            NoncurrentVersionExpirationInDays: 1
+      CorsConfiguration:                # browser may pull fonts/assets cross-origin from CloudFront
+        CorsRules:
+          - AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
+            MaxAge: 3600
+      Tags:
+        - { Key: project, Value: !Sub "${Org}-${App}" }
+        - { Key: purpose, Value: tethys-static }
+
+  OAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${BucketName}-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${Org}-${App} portal front (ALB default + S3 /static/*)"
+        PriceClass: !Ref PriceClass
+        HttpVersion: http2and3
+        Aliases: !If [HasCustomDomain, [!Ref PortalDomain], !Ref "AWS::NoValue"]
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref AcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          # S3 origin - serves /static/* (collected static, OAC-locked, private bucket).
+          - Id: s3origin
+            DomainName: !GetAtt StaticBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OAC.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }   # OAC replaces the legacy OAI
+          # ALB origin - serves the dynamic app (everything that isn't /static/*).
+          - Id: alborigin
+            DomainName: !Ref AlbDomainName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only      # CloudFront -> ALB over HTTP:80
+              HTTPPort: 80
+              OriginSSLProtocols: [TLSv1.2]
+        # Default: the dynamic Django app via the ALB. MUST NOT cache (forwards everything,
+        # CachingDisabled) or CloudFront could cache a logged-in page and serve it to others.
+        DefaultCacheBehavior:
+          TargetOriginId: alborigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad        # AWS managed: CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3 # AWS managed: AllViewer (fwd host/cookies/qs)
+        CacheBehaviors:
+          # Static files -> S3, edge-cached. Filenames are content-hashed, so long TTL is safe.
+          - PathPattern: "/static/*"
+            TargetOriginId: s3origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6      # AWS managed: CachingOptimized
+          # Media (user/app uploads) -> S3 under media/. Edge-cached (tethysdash uses UUID names).
+          - PathPattern: "/media/*"
+            TargetOriginId: s3origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6      # AWS managed: CachingOptimized
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontReadViaOAC
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${StaticBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution.Id}"
+
+Outputs:
+  BucketName:
+    Description: Set as STATIC_S3_BUCKET in the portal env.
+    Value: !Ref StaticBucket
+  CloudFrontDomain:
+    Description: Set as STATIC_CLOUDFRONT_DOMAIN in the portal env.
+    Value: !GetAtt Distribution.DomainName
+  DistributionId:
+    Value: !Ref Distribution

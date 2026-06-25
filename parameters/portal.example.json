@@ -1,0 +1,14 @@
+[
+  "Org=acme",
+  "App=portal",
+  "Environment=production",
+  "ImageUri=<account>.dkr.ecr.<region>.amazonaws.com/<ecr-repo>:<tag>",
+  "DesiredCount=1",
+  "ServiceSubnets=subnet-aaaaaaaaaaaaaaaaa,subnet-bbbbbbbbbbbbbbbbb",
+  "DbHost=aws-1-<region>.pooler.supabase.com",
+  "DbUserName=tethys_default.<project_ref>",
+  "InitVersion=<tag>",
+  "StaticBucket=acme-portal-static",
+  "CloudFrontDomain=xxxxxxxxxxxxxx.cloudfront.net",
+  "PortalAllowedHosts=<alb-dns-name>,<your-domain>"
+]

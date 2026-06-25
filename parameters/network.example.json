@@ -1,0 +1,7 @@
+[
+  "Org=acme",
+  "App=portal",
+  "Environment=production",
+  "VpcId=vpc-xxxxxxxxxxxxxxxxx",
+  "AlbSubnets=subnet-aaaaaaaaaaaaaaaaa,subnet-bbbbbbbbbbbbbbbbb"
+]
