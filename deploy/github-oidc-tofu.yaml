@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitHub Actions -> AWS via OIDC: an IAM role the tofu-deploy workflow assumes to run `tofu apply`
+  (no stored AWS keys). Deploy once. Outputs the role ARN -> set it as the repo secret
+  AWS_DEPLOY_ROLE_ARN. This role is powerful (PowerUser + IAM role management); tighten the policy
+  to specific services/resources if you want a smaller blast radius.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: Aquaveo
+  GitHubRepo:
+    Type: String
+    Default: tethys-ecs-iac
+  StateBucket:
+    Type: String
+    Default: tethys-ecs-tofu-state-401506828094
+  CreateOIDCProvider:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Set true only if the account does NOT already have the GitHub OIDC provider.
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOIDCProvider, "true"]
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList: [6938fd4d98bab03faadb97b34396831e3780aea1]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${GitHubRepo}-tofu-deploy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - MakeProvider
+                - !Ref GitHubOIDCProvider
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+              StringLike:
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/${GitHubRepo}:*"
+      ManagedPolicyArns:
+        # everything except IAM/Organizations/Account -- covers ec2, elbv2, ecs, cloudfront, s3, logs, ssm
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: iam-role-management
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # manage the portal's task/exec roles (named <org>-<app>-{exec,task}) + pass them to ECS
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListInstanceProfilesForRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/*"
+        - PolicyName: tofu-state
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["s3:ListBucket", "s3:GetBucketVersioning"]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${StateBucket}"
+              - Effect: Allow
+                Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${StateBucket}/*"
+
+Outputs:
+  RoleArn:
+    Description: Set this as the GitHub repo secret AWS_DEPLOY_ROLE_ARN.
+    Value: !GetAtt DeployRole.Arn

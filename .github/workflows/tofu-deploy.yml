@@ -1,0 +1,58 @@
+name: tofu deploy (portal infra)
+
+# Deploys a portal's infrastructure with OpenTofu. Per-portal config lives in this repo at
+# tofu/portals/<portal>/{backend.hcl, <portal>.tfvars}. Auth is GitHub OIDC -> an AWS deploy role
+# (no stored AWS keys); create it once with deploy/github-oidc-tofu.yaml.
+#
+# Repo settings required:
+#   secret  AWS_DEPLOY_ROLE_ARN  -> the deploy role ARN (output of deploy/github-oidc-tofu.yaml)
+#   var     AWS_REGION           -> e.g. us-east-1
+
+on:
+  workflow_dispatch:
+    inputs:
+      portal:
+        description: "Portal dir under tofu/portals/ (e.g. marn)"
+        required: true
+        type: string
+      action:
+        description: "plan (preview) or apply (make changes)"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+jobs:
+  tofu:
+    runs-on: ubuntu-latest
+    # To gate 'apply' behind a manual approval, create a protected GitHub Environment and uncomment:
+    # environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.12.3"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: tofu init
+        working-directory: tofu
+        run: tofu init -input=false -backend-config=portals/${{ inputs.portal }}/backend.hcl
+
+      - name: tofu plan
+        working-directory: tofu
+        run: tofu plan -input=false -var-file=portals/${{ inputs.portal }}/${{ inputs.portal }}.tfvars -out=tfplan
+
+      - name: tofu apply
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: tofu
+        run: tofu apply -input=false tfplan

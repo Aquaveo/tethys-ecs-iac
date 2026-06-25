@@ -36,7 +36,36 @@ tofu apply -var-file=acme.tfvars
 After apply, point your DNS CNAME at the `cloudfront_domain` output, then push the portal image and
 re-`apply` with the new `image_uri`/`init_version`.
 
+### Local credentials (SSO gotcha)
+OpenTofu's AWS provider (Go SDK) does **not** auto-refresh AWS SSO tokens the way the AWS CLI does —
+running `tofu` against an SSO profile can fail with `ExpiredToken` even when `aws ... --profile` works.
+Hand tofu fresh credentials derived from the (refreshed) CLI profile:
+```bash
+aws sso login --sso-session <your-sso-session>
+eval "$(aws configure export-credentials --profile <your-sso-profile> --format env)"
+tofu plan -var-file=acme.tfvars
+```
+(In CI this is a non-issue — OIDC provides credentials directly as env vars.)
+
 ## State
 S3 backend with native locking (`use_lockfile = true`). One **key per portal** (e.g.
-`portals/acme-portal.tfstate`) so portals are isolated. `backend.hcl` and real `*.tfvars` are
-gitignored; only the `*.example` files are committed.
+`portals/acme-portal.tfstate`) so portals are isolated. A loose root `backend.hcl` / `*.tfvars` are
+gitignored; per-portal configs under `portals/<org>/` **are** committed (see CI below).
+
+## Deploy via CI (push-button)
+A `workflow_dispatch` workflow (`.github/workflows/tofu-deploy.yml`) runs `tofu plan`/`apply` for a
+portal whose config lives at `tofu/portals/<org>/{backend.hcl, <org>.tfvars}` (see
+`tofu/portals/example/`). Auth is GitHub OIDC — no stored AWS keys.
+
+1. Create the deploy role once (it's powerful — PowerUser + IAM role management; tighten if desired):
+   ```bash
+   aws cloudformation deploy --template-file deploy/github-oidc-tofu.yaml \
+     --stack-name tethys-ecs-iac-tofu-deploy --capabilities CAPABILITY_NAMED_IAM \
+     --region us-east-1 --profile <admin>
+   ```
+2. Set repo **secret** `AWS_DEPLOY_ROLE_ARN` (the stack's `RoleArn` output) and **var** `AWS_REGION`.
+3. Add `tofu/portals/<org>/` (copy from `example/`), commit, then run the **tofu deploy** workflow
+   with `portal=<org>` and `action=plan` (review), then `action=apply`.
+
+> Prefer the deploy workflow to live in each portal repo instead of here? Change its trigger to
+> `workflow_call` and invoke it from the portal repo (which then supplies its own tfvars/backend).
