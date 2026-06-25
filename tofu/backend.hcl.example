@@ -1,0 +1,5 @@
+# Per-portal backend config. Copy to backend.hcl and edit, then:
+#   tofu init -backend-config=backend.hcl
+bucket = "tethys-ecs-tofu-state-401506828094"
+region = "us-east-1"
+key    = "portals/<org>-<app>.tfstate"

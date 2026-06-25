@@ -1,0 +1,29 @@
+# Copy to <org>.tfvars and edit. Apply with:  tofu apply -var-file=<org>.tfvars
+org         = "acme"
+app         = "portal"
+environment = "production"
+region      = "us-east-1"
+
+# network (use public subnets so Fargate pulls from ECR without a NAT)
+vpc_id          = "vpc-xxxxxxxx"
+alb_subnets     = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+service_subnets = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
+
+# static + CDN
+static_bucket_name  = "acme-portal-static"
+portal_domain       = "portal.example.org"                                    # "" for *.cloudfront.net only
+acm_certificate_arn = "arn:aws:acm:us-east-1:000000000000:certificate/xxxxxxxx" # required if portal_domain set
+
+# image (pushed by the portal repo's CI)
+image_uri    = "000000000000.dkr.ecr.us-east-1.amazonaws.com/tethys-portal:<tag>"
+init_version = "<tag>"
+task_cpu     = "1024"
+task_memory  = "4096"
+desired_count = 1
+
+# database (Supabase pooler)
+db_host     = "aws-1-us-east-1.pooler.supabase.com"
+db_username = "tethys_default.<project_ref>"
+db_name     = "tethys_platform"
+db_port     = 5432
+pooler_port = 6543
