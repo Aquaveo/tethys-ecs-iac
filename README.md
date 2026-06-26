@@ -56,11 +56,22 @@ Secrets are kept **out of tofu state** and **out of the image**. The flow is:
 GitHub Secrets  ──(sync-secrets CI, OIDC)──>  SSM SecureStrings /<org>/<app>/*  ──>  ECS task (runtime)
 ```
 
-Four parameters back the portal: `db-password`, `ps-connection`, `secret-key`,
-`portal-superuser-password`. Set them as GitHub Secrets in the portal repo and run the
-**sync-secrets** workflow (template: [`examples/portal-ci/sync-secrets.yml`](examples/portal-ci/sync-secrets.yml))
-— it writes them to SSM via OIDC. The ECS task reads them from SSM at runtime. Rotate by updating the
-GitHub Secret and re-running the workflow.
+Four parameters back the portal:
+
+| GitHub Secret | SSM param `/<org>/<app>/…` | Injected as | Purpose |
+|---|---|---|---|
+| `DB_PASSWORD` | `db-password` | `TETHYS_DB_PASSWORD` | database (Postgres pooler) password |
+| `PS_CONNECTION` | `ps-connection` | `TETHYS_PS_CONNECTION` | persistent-store connection string |
+| `SECRET_KEY` | `secret-key` | `TETHYS_SECRET_KEY` | Django `SECRET_KEY` (cookie/CSRF/token signing) |
+| `SUPERUSER_PASSWORD` | `portal-superuser-password` | `PORTAL_SUPERUSER_PASSWORD` | portal `admin` UI / Django-admin login |
+
+Set them as GitHub Secrets in the portal repo and run the **sync-secrets** workflow (template:
+[`examples/portal-ci/sync-secrets.yml`](examples/portal-ci/sync-secrets.yml)) — it writes them to SSM
+via OIDC. The ECS task reads them from SSM at runtime. Rotate by updating the GitHub Secret and
+re-running the workflow.
+
+> Notes: rotating `SECRET_KEY` logs everyone out (invalidates sessions + signed tokens). The
+> superuser is named `admin` (`PORTAL_SUPERUSER_NAME`) and is applied by the init container at boot.
 
 ## State
 S3 backend with native locking (`use_lockfile = true`). One **key per portal** (e.g.
