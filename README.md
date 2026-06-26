@@ -6,8 +6,9 @@ Reusable **OpenTofu** infrastructure-as-code for running a
 org/app. One root module stands up a whole portal; reuse it per portal via a `*.tfvars` file and a
 per-portal state key.
 
-> This repo previously shipped CloudFormation templates; they were removed once everything moved to
-> the OpenTofu module under `tofu/`. They remain in git history if you ever need them.
+> This repo previously shipped CloudFormation templates + a `put-secrets.sh` helper; both were removed
+> once everything moved to the OpenTofu module (`tofu/`) and CI-driven secrets. They remain in git
+> history if you ever need them.
 
 ## What it creates (`tofu/`)
 Cross-stack values (ALB DNS, CloudFront domain) are internal references — you don't pass them in:
@@ -20,17 +21,13 @@ Cross-stack values (ALB DNS, CloudFront domain) are internal references — you 
 
 ## Prerequisites
 1. **State bucket** (e.g. `tethys-ecs-tofu-state-<account>`): an S3 bucket, versioned + encrypted.
-2. **Secrets in SSM** under `/<org>/<app>/*` — run `put-secrets.sh` (db-password, ps-connection,
-   secret-key, portal-superuser-password). These are **not** managed by OpenTofu (no secrets in state).
+2. **Secrets in SSM** under `/<org>/<app>/*` — see [Secrets](#secrets) below. **Not** managed by
+   OpenTofu (no secrets in state).
 3. **ACM cert** in us-east-1 if you set `portal_domain` (validate it via DNS first).
 4. **OpenTofu >= 1.10** (uses native S3 state locking — no DynamoDB).
 
 ## Usage
 ```bash
-# 1. secrets (one-time per org/app)
-ORG=<org> APP=<app> ./put-secrets.sh        # e.g. ORG=acme GENKEY=1 AWS_PROFILE=my-sso ./put-secrets.sh
-
-# 2. deploy
 cd tofu
 cp backend.hcl.example backend.hcl          # set bucket/region + a per-portal key
 cp examples/portal.tfvars.example acme.tfvars
@@ -52,15 +49,35 @@ tofu plan -var-file=acme.tfvars
 ```
 (In CI this is a non-issue — OIDC provides credentials directly as env vars.)
 
+## Secrets
+Secrets are kept **out of tofu state** and **out of the image**. The flow is:
+
+```
+GitHub Secrets  ──(sync-secrets CI, OIDC)──>  SSM SecureStrings /<org>/<app>/*  ──>  ECS task (runtime)
+```
+
+Four parameters back the portal: `db-password`, `ps-connection`, `secret-key`,
+`portal-superuser-password`. Set them as GitHub Secrets in the portal repo and run the
+**sync-secrets** workflow (template: [`examples/portal-ci/sync-secrets.yml`](examples/portal-ci/sync-secrets.yml))
+— it writes them to SSM via OIDC. The ECS task reads them from SSM at runtime. Rotate by updating the
+GitHub Secret and re-running the workflow.
+
 ## State
 S3 backend with native locking (`use_lockfile = true`). One **key per portal** (e.g.
 `portals/acme-portal.tfstate`) so portals are isolated. `backend.hcl` and real `*.tfvars` are
 gitignored; only the `*.example` files are committed here.
 
-## Deploy / CI ownership
+## Per-portal CI (templates)
 This repo stays **general** — it holds only the module + examples. Each **portal repo** owns its own
-specifics (its `*.tfvars`, `backend.hcl`, the GitHub OIDC deploy role, and the deploy workflow). A
-portal's deploy workflow checks out this repo's `tofu/` (it's public), then runs
-`tofu init -backend-config=<its backend.hcl>` + `tofu apply -var-file=<its tfvars>` against its own
-state key. See [`geoglows/enee-geoglows-portal`](https://github.com/geoglows/enee-geoglows-portal)
+`*.tfvars`, `backend.hcl`, and CI. Copy the kit in [`examples/portal-ci/`](examples/portal-ci/) into a
+new portal repo and fill in the placeholders:
+
+| Template | Goes to | Purpose |
+|---|---|---|
+| `github-oidc-tofu.yaml` | `deploy/` (deploy once) | IAM role the CI assumes via OIDC (no stored AWS keys) |
+| `tofu-deploy.yml` | `.github/workflows/` | `plan`/`apply` infra (checks out this module, uses the portal's tfvars/backend) |
+| `sync-secrets.yml` | `.github/workflows/` | push the portal's GitHub Secrets to SSM |
+
+Repo settings each portal sets: secret `AWS_DEPLOY_ROLE_ARN` (role output), var `AWS_REGION`, plus the
+secret values. See [`geoglows/enee-geoglows-portal`](https://github.com/geoglows/enee-geoglows-portal)
 for a working example.
