@@ -53,7 +53,7 @@ S3 backend with native locking (`use_lockfile = true`). One **key per portal** (
 gitignored; only the `*.example` files are committed here.
 
 ## Deploy / CI ownership
-This repo stays **general** — it holds only the module + examples. Each **portal repo** owns its own
+This repo stays **general** - it holds only the module + examples. Each **portal repo** owns its own
 specifics (its `*.tfvars`, `backend.hcl`, the GitHub OIDC deploy role, and the deploy workflow). A
 portal's deploy workflow checks out this repo's `tofu/` (it's public), then runs
 `tofu init -backend-config=<its backend.hcl>` + `tofu apply -var-file=<its tfvars>` against its own
