@@ -1,8 +1,0 @@
-[
-  "Org=acme",
-  "App=portal",
-  "BucketName=acme-portal-static",
-  "AlbDomainName=<alb-dns-name>",
-  "PortalDomain=portal.example.org",
-  "AcmCertificateArn=arn:aws:acm:us-east-1:<account>:certificate/<id>"
-]

@@ -1,7 +1,0 @@
-[
-  "Org=acme",
-  "App=portal",
-  "Environment=production",
-  "StaticBucketName=acme-portal-static",
-  "SsmPrefix=/acme/portal"
-]

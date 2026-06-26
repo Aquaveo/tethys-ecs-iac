@@ -1,3 +1,5 @@
-# Per-org parameter files hold real account IDs; only *.example.json is committed.
-parameters/*.json
-!parameters/*.example.json
+# OpenTofu local artifacts (the module lives in tofu/; its own .gitignore covers state/tfvars).
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
