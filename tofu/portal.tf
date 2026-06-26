@@ -10,9 +10,8 @@ locals {
     { name = "TETHYS_DB_HOST", value = var.db_host },
     { name = "TETHYS_DB_PORT", value = tostring(var.db_port) },
     { name = "TETHYS_DB_USERNAME", value = var.db_username },
-    { name = "TETHYS_POOLER_HOST", value = var.db_host },
-    { name = "TETHYS_POOLER_PORT", value = tostring(var.pooler_port) },
-    { name = "DISABLE_SERVER_SIDE_CURSORS", value = "true" },
+    # 'direct' or 'transaction' -> portal-config.sh sets DISABLE_SERVER_SIDE_CURSORS (DB-agnostic).
+    { name = "TETHYS_DB_POOL_MODE", value = var.db_pool_mode },
     { name = "TETHYS_PORT", value = tostring(var.web_port) },
     { name = "ASGI_PROCESSES", value = var.asgi_processes },
     { name = "INIT_VERSION", value = var.init_version },

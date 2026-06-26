@@ -21,9 +21,13 @@ task_cpu     = "1024"
 task_memory  = "4096"
 desired_count = 1
 
-# database (Supabase pooler)
-db_host     = "aws-1-us-east-1.pooler.supabase.com"
-db_username = "tethys_default.<project_ref>"
-db_name     = "tethys_platform"
-db_port     = 5432
-pooler_port = 6543
+# database -- any external Postgres. Two common setups:
+#   direct (RDS/Aurora/Cloud SQL/self-managed):
+#     db_host = "db.xxxx.us-east-1.rds.amazonaws.com"  db_username = "tethys_default"  db_port = 5432  db_pool_mode = "direct"
+#   Supabase transaction pooler:
+#     db_host = "aws-1-us-east-1.pooler.supabase.com"  db_username = "tethys_default.<project_ref>"  db_port = 6543  db_pool_mode = "transaction"
+db_host      = "db.xxxx.us-east-1.rds.amazonaws.com"
+db_username  = "tethys_default"
+db_name      = "tethys_platform"
+db_port      = 5432
+db_pool_mode = "direct"

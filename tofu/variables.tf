@@ -101,26 +101,33 @@ variable "init_version" {
   description = "run-once guard key (set to the image tag)."
 }
 
-# ---- database (Supabase pooler) ----
+# ---- database (any external Postgres: RDS / Aurora / Cloud SQL / self-managed, or a pooler such as
+#      Supabase Supavisor / PgBouncer) ----
 variable "db_host" {
   type        = string
-  description = "Pooler host, e.g. aws-1-us-east-1.pooler.supabase.com"
+  description = "Postgres host (or pooler host), e.g. db.xxxx.us-east-1.rds.amazonaws.com or aws-1-us-east-1.pooler.supabase.com"
 }
 variable "db_username" {
   type        = string
-  description = "Pooler username form, e.g. tethys_default.<project_ref>"
+  description = "Postgres username. For a Supabase transaction pooler use the tenant form <role>.<project_ref>; otherwise the plain role (e.g. tethys_default)."
 }
 variable "db_name" {
   type    = string
   default = "tethys_platform"
 }
 variable "db_port" {
-  type    = number
-  default = 5432
+  type        = number
+  default     = 5432
+  description = "Postgres port (e.g. 5432 direct, or 6543 for the Supabase transaction pooler)."
 }
-variable "pooler_port" {
-  type    = number
-  default = 6543
+variable "db_pool_mode" {
+  type        = string
+  default     = "direct"
+  description = "How the app reaches Postgres: 'direct' (plain Postgres / session pooling) or 'transaction' (transaction-mode pooler -- Supabase Supavisor / PgBouncer). Sets DISABLE_SERVER_SIDE_CURSORS accordingly."
+  validation {
+    condition     = contains(["direct", "transaction"], var.db_pool_mode)
+    error_message = "db_pool_mode must be 'direct' or 'transaction'."
+  }
 }
 
 # ---- geoglows plot cache (geoglows tethysdash plugin) ----
