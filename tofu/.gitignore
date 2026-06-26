@@ -5,7 +5,3 @@
 backend.hcl
 *.tfvars
 !*.tfvars.example
-
-# Per-portal deploy configs ARE committed (account IDs/ARNs, not secrets) so CI can read them.
-!portals/**/backend.hcl
-!portals/**/*.tfvars
