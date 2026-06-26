@@ -1,0 +1,4 @@
+# Copy to backend.hcl in the portal repo's tofu-iam/ and edit.  tofu init -backend-config=backend.hcl
+bucket = "<tofu-state-bucket>"
+region = "us-east-1"
+key    = "portals/<org>-portal-iam.tfstate"

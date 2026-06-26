@@ -74,7 +74,7 @@ new portal repo and fill in the placeholders:
 
 | Template | Goes to | Purpose |
 |---|---|---|
-| `github-oidc-tofu.yaml` | `deploy/` (deploy once) | IAM role the CI assumes via OIDC (no stored AWS keys) |
+| `tofu-iam/` | `tofu-iam/` (apply once, admin creds) | OpenTofu for the OIDC CI roles (ECR push + tofu deploy) — no CloudFormation |
 | `tofu-deploy.yml` | `.github/workflows/` | `plan`/`apply` infra (checks out this module, uses the portal's tfvars/backend) |
 | `sync-secrets.yml` | `.github/workflows/` | push the portal's GitHub Secrets to SSM |
 
