@@ -14,6 +14,7 @@ locals {
     { name = "TETHYS_DB_POOL_MODE", value = var.db_pool_mode },
     { name = "TETHYS_PORT", value = tostring(var.web_port) },
     { name = "ASGI_PROCESSES", value = var.asgi_processes },
+    { name = "SERVER", value = var.server }, # uvicorn | gunicorn (gunicorn manages uvicorn workers)
     { name = "INIT_VERSION", value = var.init_version },
     { name = "AWS_REGION", value = var.region },
     { name = "AWS_DEFAULT_REGION", value = var.region },
@@ -63,12 +64,12 @@ resource "aws_ecs_task_definition" "portal" {
         }
       }
     },
-    # web container: uvicorn, starts after init SUCCESS
+    # web container: ASGI server (uvicorn or gunicorn per var.server), starts after init SUCCESS
     {
       name         = "web"
       image        = var.image_uri
       essential    = true
-      command      = ["/usr/local/bin/start-uvicorn.sh"]
+      command      = ["/usr/local/bin/start-server.sh"]
       dependsOn    = [{ containerName = "init", condition = "SUCCESS" }]
       portMappings = [{ containerPort = var.web_port, protocol = "tcp" }]
       environment  = local.base_env

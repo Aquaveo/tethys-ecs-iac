@@ -96,6 +96,15 @@ variable "asgi_processes" {
   type    = string
   default = "2"
 }
+variable "server" {
+  type        = string
+  default     = "uvicorn"
+  description = "ASGI server: 'uvicorn' (bare workers) or 'gunicorn' (gunicorn managing uvicorn workers -- worker recycling/timeouts/graceful restarts)."
+  validation {
+    condition     = contains(["uvicorn", "gunicorn"], var.server)
+    error_message = "server must be 'uvicorn' or 'gunicorn'."
+  }
+}
 variable "init_version" {
   type        = string
   description = "run-once guard key (set to the image tag)."
