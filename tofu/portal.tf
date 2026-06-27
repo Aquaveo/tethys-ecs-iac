@@ -15,7 +15,7 @@ locals {
     { name = "TETHYS_PORT", value = tostring(var.web_port) },
     { name = "ASGI_PROCESSES", value = var.asgi_processes },
     { name = "SERVER", value = var.server }, # uvicorn | gunicorn (gunicorn manages uvicorn workers)
-    { name = "INIT_VERSION", value = var.init_version },
+    { name = "INIT_VERSION", value = local.init_version },
     { name = "AWS_REGION", value = var.region },
     { name = "AWS_DEFAULT_REGION", value = var.region },
     { name = "STATIC_S3_BUCKET", value = var.static_bucket_name },

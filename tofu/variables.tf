@@ -107,7 +107,8 @@ variable "server" {
 }
 variable "init_version" {
   type        = string
-  description = "run-once guard key (set to the image tag)."
+  default     = ""
+  description = "run-once guard key. Empty (default) -> auto-derived from the image tag, so each new image re-runs init (incl. static publish) and S3 static can't go stale. Set explicitly only to force a re-run without changing the image."
 }
 
 # ---- database (any external Postgres: RDS / Aurora / Cloud SQL / self-managed, or a pooler such as

@@ -6,6 +6,11 @@ locals {
   has_custom_domain = var.portal_domain != ""
   account_id        = data.aws_caller_identity.current.account_id
 
+  # init_version = the explicit var, else auto-derived from the image tag (the part after the last
+  # ':'). Keeps the static-publish run-once key in lockstep with the image so S3 static never goes
+  # stale: a new image -> new tag -> new key -> collectstatic re-runs.
+  init_version = var.init_version != "" ? var.init_version : reverse(split(":", var.image_uri))[0]
+
   tags = {
     project = local.name
     env     = var.environment
