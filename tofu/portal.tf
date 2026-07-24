@@ -46,31 +46,13 @@ resource "aws_ecs_task_definition" "portal" {
   task_role_arn            = aws_iam_role.task.arn
   tags                     = local.tags
 
+  # web only: provisioning runs as a separate one-shot task from CI (see below), not an init container.
   container_definitions = jsonencode([
-    # init container: runs init-tethys.sh once per task start, then exits (essential:false)
-    {
-      name        = "init"
-      image       = var.image_uri
-      essential   = false
-      command     = ["/usr/local/bin/init-tethys.sh"]
-      environment = concat(local.base_env, [{ name = "PORTAL_SUPERUSER_NAME", value = "admin" }])
-      secrets     = local.init_secrets
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.portal.name
-          "awslogs-region"        = var.region
-          "awslogs-stream-prefix" = "init"
-        }
-      }
-    },
-    # web container: ASGI server (uvicorn or gunicorn per var.server), starts after init SUCCESS
     {
       name         = "web"
       image        = var.image_uri
       essential    = true
       command      = ["/usr/local/bin/start-server.sh"]
-      dependsOn    = [{ containerName = "init", condition = "SUCCESS" }]
       portMappings = [{ containerPort = var.web_port, protocol = "tcp" }]
       environment  = local.base_env
       secrets      = local.web_secrets
@@ -80,6 +62,39 @@ resource "aws_ecs_task_definition" "portal" {
           "awslogs-group"         = aws_cloudwatch_log_group.portal.name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "web"
+        }
+      }
+    },
+  ])
+}
+
+# One-shot provisioning task. CI runs this (aws ecs run-task) BEFORE rolling the web service:
+# init-tethys.sh -> migrate + services + publish-static + bootstrap. Not part of the service, so a
+# failed provision is a visible CI failure, not a task-start rollback, and web tasks start fast.
+resource "aws_ecs_task_definition" "provision" {
+  family                   = "${local.name}-provision"
+  cpu                      = var.task_cpu
+  memory                   = var.task_memory
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  execution_role_arn       = aws_iam_role.exec.arn
+  task_role_arn            = aws_iam_role.task.arn
+  tags                     = local.tags
+
+  container_definitions = jsonencode([
+    {
+      name        = "provision"
+      image       = var.image_uri
+      essential   = true
+      command     = ["/usr/local/bin/init-tethys.sh"]
+      environment = concat(local.base_env, [{ name = "PORTAL_SUPERUSER_NAME", value = "admin" }])
+      secrets     = local.init_secrets
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.portal.name
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "provision"
         }
       }
     },
@@ -116,6 +131,12 @@ resource "aws_ecs_service" "portal" {
 
   propagate_tags = "SERVICE"
   tags           = local.tags
+
+  # CI controls rollout: it points the service at the new task def (update-service) only AFTER the
+  # provision run-task succeeds, so tofu must not roll the service on apply.
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 
   depends_on = [aws_lb_listener.http]
 }
