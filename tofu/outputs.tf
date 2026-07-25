@@ -28,3 +28,30 @@ output "portal_allowed_hosts" {
   description = "Computed ALLOWED_HOSTS passed to the task (CloudFront + ALB + domain)."
   value       = local.portal_allowed_hosts
 }
+
+# --- consumed by the CI provision-then-roll step ---
+output "web_task_definition" {
+  description = "Latest web task def ARN; CI points the service here after provisioning succeeds."
+  value       = aws_ecs_task_definition.portal.arn
+}
+
+output "provision_task_definition" {
+  description = "One-shot provision task def ARN; CI run-tasks this before rolling the service."
+  value       = aws_ecs_task_definition.provision.arn
+}
+
+output "provision_container_name" {
+  value = "provision"
+}
+
+output "service_subnets" {
+  value = var.service_subnets
+}
+
+output "web_security_group" {
+  value = aws_security_group.web.id
+}
+
+output "assign_public_ip" {
+  value = var.assign_public_ip
+}

@@ -1,6 +1,6 @@
 name: tofu deploy (portal infra)
 
-# TEMPLATE — copy into a portal repo's .github/workflows/. The portal repo holds its own
+# TEMPLATE - copy into a portal repo's .github/workflows/. The portal repo holds its own
 # tofu/<org>.tfvars + tofu/backend.hcl; this checks out the general module from the public
 # Aquaveo/tethys-ecs-iac and runs it against the portal's state key. Auth is GitHub OIDC.
 #
@@ -67,3 +67,40 @@ jobs:
         if: ${{ inputs.action == 'apply' }}
         working-directory: iac/tofu
         run: tofu apply -input=false tfplan
+
+      # Provision, THEN roll: run init-tethys.sh as a one-shot task and wait for success before
+      # pointing the web service at the new image. Mirrors CIROH's CI provision job.
+      - name: Provision + roll service
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: iac/tofu
+        run: |
+          set -euo pipefail
+          CLUSTER=$(tofu output -raw ecs_cluster)
+          SERVICE=$(tofu output -raw service_name)
+          PROVISION_TD=$(tofu output -raw provision_task_definition)
+          WEB_TD=$(tofu output -raw web_task_definition)
+          CNAME=$(tofu output -raw provision_container_name)
+          SG=$(tofu output -raw web_security_group)
+          SUBNETS=$(tofu output -json service_subnets | jq -r 'join(",")')
+          [ "$(tofu output -raw assign_public_ip)" = "true" ] && PUBIP=ENABLED || PUBIP=DISABLED
+          NETCFG="awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=$PUBIP}"
+
+          echo "== run one-shot provision task =="
+          TASK=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$PROVISION_TD" \
+            --launch-type FARGATE --network-configuration "$NETCFG" \
+            --started-by "ci-provision" --query 'tasks[0].taskArn' --output text)
+          echo "provision task: $TASK"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK"
+          CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK" \
+            --query "tasks[0].containers[?name=='${CNAME}'].exitCode | [0]" --output text)
+          echo "provision exit code: $CODE"
+          if [ "$CODE" != "0" ]; then
+            echo "::error::provision task did not succeed (exit ${CODE}); service NOT rolled."
+            exit 1
+          fi
+
+          echo "== roll web service to the new task def =="
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$WEB_TD" --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          echo "deploy complete."
