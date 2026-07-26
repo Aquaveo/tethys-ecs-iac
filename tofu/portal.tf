@@ -52,7 +52,7 @@ resource "aws_ecs_task_definition" "portal" {
       name         = "web"
       image        = var.image_uri
       essential    = true
-      command      = ["/usr/local/bin/start-server.sh"]
+      command      = ["/usr/local/bin/serve.sh"]
       portMappings = [{ containerPort = var.web_port, protocol = "tcp" }]
       environment  = local.base_env
       secrets      = local.web_secrets
@@ -69,8 +69,8 @@ resource "aws_ecs_task_definition" "portal" {
 }
 
 # One-shot provisioning task. CI runs this (aws ecs run-task) BEFORE rolling the web service:
-# init-tethys.sh (migrate + services + bootstrap) then publish-static.sh (collectstatic -> S3). Not
-# part of the service, so a failed provision is a visible CI failure, not a task-start rollback.
+# provision.sh = migrate + services + publish-static (DEBUG-gated) + bootstrap + hooks. Not part of
+# the service, so a failed provision is a visible CI failure, not a task-start rollback.
 resource "aws_ecs_task_definition" "provision" {
   family                   = "${local.name}-provision"
   cpu                      = var.task_cpu
@@ -86,7 +86,7 @@ resource "aws_ecs_task_definition" "provision" {
       name        = "provision"
       image       = var.image_uri
       essential   = true
-      command     = ["/bin/bash", "-c", "/usr/local/bin/init-tethys.sh && /usr/local/bin/publish-static.sh"]
+      command     = ["/usr/local/bin/provision.sh"]
       environment = concat(local.base_env, [{ name = "PORTAL_SUPERUSER_NAME", value = "admin" }])
       secrets     = local.init_secrets
       logConfiguration = {
