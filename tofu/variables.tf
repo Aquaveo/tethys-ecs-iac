@@ -43,6 +43,11 @@ variable "web_port" {
 }
 
 # ---- roles / secrets ----
+variable "iam_permissions_boundary" {
+  type        = string
+  default     = ""
+  description = "Optional permissions boundary ARN applied to the task and execution roles. Lets a CI role be granted iam:CreateRole under an iam:PermissionsBoundary condition, so a role it creates cannot exceed the boundary. Empty applies none."
+}
 variable "ssm_prefix" {
   type        = string
   default     = ""

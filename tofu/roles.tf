@@ -10,9 +10,10 @@ data "aws_iam_policy_document" "ecs_assume" {
 
 # ---- execution role: ECR pull + CloudWatch logs + SSM secrets ----
 resource "aws_iam_role" "exec" {
-  name               = "${local.name}-exec"
-  assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
-  tags               = local.tags
+  name                 = "${local.name}-exec"
+  permissions_boundary = var.iam_permissions_boundary != "" ? var.iam_permissions_boundary : null
+  assume_role_policy   = data.aws_iam_policy_document.ecs_assume.json
+  tags                 = local.tags
 }
 
 resource "aws_iam_role_policy_attachment" "exec_managed" {
@@ -44,9 +45,10 @@ resource "aws_iam_role_policy" "exec_ssm" {
 
 # ---- task role: S3 write to the static/media/cache bucket ----
 resource "aws_iam_role" "task" {
-  name               = "${local.name}-task"
-  assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
-  tags               = local.tags
+  name                 = "${local.name}-task"
+  permissions_boundary = var.iam_permissions_boundary != "" ? var.iam_permissions_boundary : null
+  assume_role_policy   = data.aws_iam_policy_document.ecs_assume.json
+  tags                 = local.tags
 }
 
 data "aws_iam_policy_document" "s3_write" {
