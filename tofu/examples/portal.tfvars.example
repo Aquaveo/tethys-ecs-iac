@@ -10,10 +10,10 @@ alb_subnets     = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 service_subnets = ["subnet-aaaaaaaa", "subnet-bbbbbbbb"]
 
 # static + CDN
-static_bucket_name  = "acme-portal-static"
-portal_domain       = "portal.example.org"                                    # "" for *.cloudfront.net only
-portal_domain_aliases = []                      # e.g. ["*.portal.example.org"] for wildcard tenant subdomains
-acm_certificate_arn = "arn:aws:acm:us-east-1:000000000000:certificate/xxxxxxxx" # required if portal_domain set
+static_bucket_name    = "acme-portal-static"
+portal_domain         = "portal.example.org"                                    # "" for *.cloudfront.net only
+portal_domain_aliases = []                                                      # e.g. ["*.portal.example.org"]
+acm_certificate_arn   = "arn:aws:acm:us-east-1:000000000000:certificate/xxxxxxxx" # must cover portal_domain and every alias
 
 # image (pushed by the portal repo's CI)
 image_uri    = "000000000000.dkr.ecr.us-east-1.amazonaws.com/tethys-portal:<tag>"
