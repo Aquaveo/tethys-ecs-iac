@@ -7,6 +7,7 @@ locals {
     { name = "PORTAL_ALLOWED_HOSTS", value = local.portal_allowed_hosts },
     { name = "TETHYS_DB_ENGINE", value = "django.db.backends.postgresql" },
     { name = "TETHYS_DB_NAME", value = var.db_name },
+    { name = "PGDATABASE", value = var.db_name },
     { name = "TETHYS_DB_HOST", value = var.db_host },
     { name = "TETHYS_DB_PORT", value = tostring(var.db_port) },
     { name = "TETHYS_DB_USERNAME", value = var.db_username },
