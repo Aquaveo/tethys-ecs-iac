@@ -17,24 +17,25 @@ Cross-stack values (ALB DNS, CloudFront domain) are internal references — you 
 - `cluster.tf` — ECS cluster + log group
 - `static_cdn.tf` — S3 (static/media + geoglows cache lifecycle) + CloudFront (ALB default, S3 for
   `/static` + `/media`) + OAC + bucket policy
+- `portal.tf` — task definition (init + web) + Fargate service
 
 ### Multiple domains on one distribution
 `portal_domain` is the primary alternate domain name. `portal_domain_aliases` adds more, in
-CloudFront form, and is what a multi-tenant portal uses for wildcard tenant subdomains:
+CloudFront form. A portal that routes tenants by subdomain uses it for the wildcard:
 
 ```hcl
-portal_domain         = "uhm.uffis.org"
-portal_domain_aliases = ["*.uhm.uffis.org"]
+portal_domain         = "portal.example.org"
+portal_domain_aliases = ["*.portal.example.org"]
 ```
 
-CloudFront answers a `Host` that is not a configured alternate domain name with 403 CNAMEMismatch
-before the request reaches the ALB, so a tenant subdomain is unreachable until it is listed here.
+The ACM certificate must cover every entry. CloudFront answers a `Host` that is not a configured
+alternate domain name with 403 CNAMEMismatch before the request reaches the ALB, so a subdomain is
+unreachable until it is listed here.
 
-The module deliberately does not derive Django's `ALLOWED_HOSTS` or `CSRF_TRUSTED_ORIGINS` from these
-aliases. Those need different spellings (a leading dot, and `https://*.`), and a portal declares them
-in its own `portal_config.yml`. Adding them to the task environment here would change every portal's
-task definition, including portals that use no aliases.
-- `portal.tf` — task definition (init + web) + Fargate service
+The module does not derive Django's `ALLOWED_HOSTS` or `CSRF_TRUSTED_ORIGINS` from these aliases.
+Those need different spellings (a leading dot, and `https://*.`), and a portal declares them in its
+own `portal_config.yml`. Adding them to the task environment here would change the task definition of
+every portal, including portals that use no aliases.
 
 ## Prerequisites
 1. **State bucket** (e.g. `tethys-ecs-tofu-state-<account>`): an S3 bucket, versioned + encrypted.
