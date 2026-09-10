@@ -19,11 +19,30 @@ Cross-stack values (ALB DNS, CloudFront domain) are internal references — you 
   `/static` + `/media`) + OAC + bucket policy
 - `portal.tf` — task definition (init + web) + Fargate service
 
+### Multiple domains on one distribution
+`portal_domain` is the primary alternate domain name. `portal_domain_aliases` adds more, in
+CloudFront form. A portal that routes tenants by subdomain uses it for the wildcard:
+
+```hcl
+portal_domain         = "portal.example.org"
+portal_domain_aliases = ["*.portal.example.org"]
+```
+
+The ACM certificate must cover every entry. CloudFront answers a `Host` that is not a configured
+alternate domain name with 403 CNAMEMismatch before the request reaches the ALB, so a subdomain is
+unreachable until it is listed here.
+
+The module does not derive Django's `ALLOWED_HOSTS` or `CSRF_TRUSTED_ORIGINS` from these aliases.
+Those need different spellings (a leading dot, and `https://*.`), and a portal declares them in its
+own `portal_config.yml`. Adding them to the task environment here would change the task definition of
+every portal, including portals that use no aliases.
+
 ## Prerequisites
 1. **State bucket** (e.g. `tethys-ecs-tofu-state-<account>`): an S3 bucket, versioned + encrypted.
 2. **Secrets in SSM** under `/<org>/<app>/*` — see [Secrets](#secrets) below. **Not** managed by
    OpenTofu (no secrets in state).
-3. **ACM cert** in us-east-1 if you set `portal_domain` (validate it via DNS first).
+3. **ACM cert** in us-east-1 if you set `portal_domain` (validate it via DNS first). It must also
+   cover every entry in `portal_domain_aliases`.
 4. **OpenTofu >= 1.10** (uses native S3 state locking — no DynamoDB).
 
 ## Usage
