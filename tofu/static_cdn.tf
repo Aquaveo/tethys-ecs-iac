@@ -51,7 +51,7 @@ resource "aws_cloudfront_distribution" "this" {
   is_ipv6_enabled = true
   price_class     = var.price_class
   comment         = "${local.name} portal"
-  aliases         = local.has_custom_domain ? [var.portal_domain] : []
+  aliases         = local.has_custom_domain ? concat([var.portal_domain], var.portal_domain_aliases) : []
 
   # default origin: the ALB (dynamic portal), HTTP-only from CloudFront
   origin {

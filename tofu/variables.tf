@@ -63,6 +63,11 @@ variable "portal_domain" {
   default     = ""
   description = "Public domain (CloudFront alternate domain), e.g. portal.example.org. Empty = *.cloudfront.net only."
 }
+variable "portal_domain_aliases" {
+  type        = list(string)
+  default     = []
+  description = "Additional CloudFront alternate domain names, in CloudFront form (e.g. \"*.acme.example.org\"). Used for wildcard tenant subdomains. acm_certificate_arn must cover every entry. Empty leaves the distribution with portal_domain alone."
+}
 variable "acm_certificate_arn" {
   type        = string
   default     = ""
