@@ -14,6 +14,10 @@ locals {
     # 'direct' or 'transaction' -> portal-config.sh sets DISABLE_SERVER_SIDE_CURSORS (DB-agnostic).
     { name = "TETHYS_DB_POOL_MODE", value = var.db_pool_mode },
     { name = "TETHYS_PORT", value = tostring(var.web_port) },
+    { name = "EMAIL_HOST", value = var.email_host },
+    { name = "EMAIL_PORT", value = tostring(var.email_port) },
+    { name = "EMAIL_HOST_USER", value = var.email_host_user },
+    { name = "DEFAULT_FROM_EMAIL", value = var.default_from_email },
     { name = "ASGI_PROCESSES", value = var.asgi_processes },
     { name = "SERVER", value = var.server }, # uvicorn | gunicorn (gunicorn manages uvicorn workers)
     { name = "INIT_VERSION", value = local.init_version },
@@ -27,11 +31,15 @@ locals {
     { name = "GEOGLOWS_CACHE_PREFIX", value = var.geoglows_cache_prefix },
   ]
 
-  web_secrets = [
+  # A valueFrom entry whose SSM parameter is absent stops the task from starting at all, so the
+  # mail secret is only attached once a host is configured.
+  web_secrets = concat([
     { name = "TETHYS_DB_PASSWORD", valueFrom = "${local.ssm_arn}/db-password" },
     { name = "TETHYS_PS_CONNECTION", valueFrom = "${local.ssm_arn}/ps-connection" },
     { name = "TETHYS_SECRET_KEY", valueFrom = "${local.ssm_arn}/secret-key" },
-  ]
+    ], var.email_host == "" ? [] : [
+    { name = "EMAIL_HOST_PASSWORD", valueFrom = "${local.ssm_arn}/email-password" },
+  ])
   init_secrets = concat(local.web_secrets, [
     { name = "PORTAL_SUPERUSER_PASSWORD", valueFrom = "${local.ssm_arn}/portal-superuser-password" },
   ])

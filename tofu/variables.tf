@@ -48,6 +48,27 @@ variable "iam_permissions_boundary" {
   default     = ""
   description = "Optional permissions boundary ARN applied to the task and execution roles. Lets a CI role be granted iam:CreateRole under an iam:PermissionsBoundary condition, so a role it creates cannot exceed the boundary. Empty applies none."
 }
+variable "email_host" {
+  type        = string
+  default     = ""
+  description = "SMTP host for outbound portal mail, for example email-smtp.us-east-1.amazonaws.com. Empty leaves mail unconfigured and password reset silently fails."
+}
+
+variable "email_port" {
+  type    = number
+  default = 587
+}
+
+variable "email_host_user" {
+  type    = string
+  default = ""
+}
+
+variable "default_from_email" {
+  type    = string
+  default = ""
+}
+
 variable "ssm_prefix" {
   type        = string
   default     = ""
