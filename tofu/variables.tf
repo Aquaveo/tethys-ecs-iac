@@ -180,3 +180,15 @@ variable "geoglows_cache_prefix" {
   type    = string
   default = "cache/geoglows"
 }
+
+variable "restrict_alb_to_cloudfront" {
+  type        = bool
+  default     = false
+  description = "Accept traffic on the ALB only from CloudFront's origin-facing ranges. Closes the plaintext path that bypasses the distribution, and is required before edge_proto_header can be trusted."
+}
+
+variable "edge_proto_header" {
+  type        = string
+  default     = ""
+  description = "Header CloudFront adds to ALB origin requests asserting the viewer used TLS. Point the portal's SECURE_PROXY_SSL_HEADER at the same name. Only set this with restrict_alb_to_cloudfront enabled, or it can be spoofed."
+}
