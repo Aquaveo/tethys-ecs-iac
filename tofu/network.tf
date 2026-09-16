@@ -16,6 +16,13 @@ data "aws_ec2_managed_prefix_list" "cloudfront_origins" {
   name  = "com.amazonaws.global.cloudfront.origin-facing"
 }
 
+# Adding count to a resource that never had one changes its state address, so without this an
+# existing portal would plan to destroy and recreate the rule that admits all traffic to its ALB.
+moved {
+  from = aws_vpc_security_group_ingress_rule.alb_http
+  to   = aws_vpc_security_group_ingress_rule.alb_http[0]
+}
+
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   count             = var.restrict_alb_to_cloudfront ? 0 : 1
   security_group_id = aws_security_group.alb.id
@@ -33,7 +40,10 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_cloudfront" {
   ip_protocol       = "tcp"
   from_port         = 80
   to_port           = 80
-  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id
+  # The prefix list counts against the rules-per-security-group quota once per entry, currently 46
+  # of a default 60. That is enough today and leaves little room, so a group carrying other rules
+  # may need the quota raised.
+  prefix_list_id = data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_all" {
