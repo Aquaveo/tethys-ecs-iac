@@ -33,17 +33,21 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
+# One rule spanning both ports rather than one per port. A prefix list costs a rule slot per entry,
+# currently 46 against a default quota of 60, so two of them need 92 and the second is refused with
+# RulesPerSecurityGroupLimitExceeded. That is only raised at apply, never in a plan, and it left a
+# distribution pointing at a port its security group did not admit.
+#
+# The range covers 81 to 442 as well. Nothing listens there, and only CloudFront can reach the
+# listener at all, so the cost is a wider rule on paper rather than a wider surface in practice.
 resource "aws_vpc_security_group_ingress_rule" "alb_http_cloudfront" {
   count             = var.restrict_alb_to_cloudfront ? 1 : 0
   security_group_id = aws_security_group.alb.id
-  description       = "HTTP from CloudFront origin-facing ranges only"
+  description       = "HTTP and HTTPS from CloudFront origin-facing ranges only"
   ip_protocol       = "tcp"
   from_port         = 80
-  to_port           = 80
-  # The prefix list counts against the rules-per-security-group quota once per entry, currently 46
-  # of a default 60. That is enough today and leaves little room, so a group carrying other rules
-  # may need the quota raised.
-  prefix_list_id = data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id
+  to_port           = 443
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id
 }
 
 # CloudFront validates the origin certificate against the origin's domain name, which is the ELB
@@ -63,15 +67,16 @@ resource "aws_lb_listener" "https" {
   }
 }
 
+# Only needed when the listener is open to the internet. With restrict_alb_to_cloudfront on, the
+# rule above already spans 443 and a second prefix list rule would exceed the quota.
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
-  count             = var.alb_origin_domain == "" ? 0 : 1
+  count             = var.alb_origin_domain != "" && !var.restrict_alb_to_cloudfront ? 1 : 0
   security_group_id = aws_security_group.alb.id
-  description       = var.restrict_alb_to_cloudfront ? "HTTPS from CloudFront origin-facing ranges only" : "HTTPS from internet"
+  description       = "HTTPS from internet"
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-  prefix_list_id    = var.restrict_alb_to_cloudfront ? data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id : null
-  cidr_ipv4         = var.restrict_alb_to_cloudfront ? null : "0.0.0.0/0"
+  cidr_ipv4         = "0.0.0.0/0"
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_all" {
