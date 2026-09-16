@@ -180,3 +180,9 @@ variable "geoglows_cache_prefix" {
   type    = string
   default = "cache/geoglows"
 }
+
+variable "edge_proto_header" {
+  type        = string
+  default     = ""
+  description = "Header CloudFront adds to ALB origin requests, asserting the viewer used TLS. Point the portal's SECURE_PROXY_SSL_HEADER at the same name. Empty disables it."
+}

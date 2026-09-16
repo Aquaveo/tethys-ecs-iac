@@ -63,6 +63,19 @@ resource "aws_cloudfront_distribution" "this" {
       origin_protocol_policy = "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
+
+    # TLS terminates here and the hop to the ALB is plain HTTP, so the ALB sets
+    # X-Forwarded-Proto: http and Django decides the request is insecure. Every absolute URL it
+    # builds is then http://, including password reset links. Every viewer behaviour is
+    # redirect-to-https, so anything that reaches the origin through this distribution arrived over
+    # TLS and this header can assert it. Portals that do not set the variable are unaffected.
+    dynamic "custom_header" {
+      for_each = var.edge_proto_header == "" ? [] : [1]
+      content {
+        name  = var.edge_proto_header
+        value = "https"
+      }
+    }
   }
 
   # S3 origin for static + media, locked to CloudFront via OAC
