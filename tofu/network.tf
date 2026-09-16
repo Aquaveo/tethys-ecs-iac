@@ -6,13 +6,34 @@ resource "aws_security_group" "alb" {
   tags        = merge(local.tags, { Name = "${local.name}-alb" })
 }
 
+# With the ALB open to the world on 80, the portal is reachable in plaintext at the load balancer
+# DNS name, which bypasses the distribution and its redirect-to-https entirely. Restricting ingress
+# to CloudFront's origin-facing ranges closes that path and is what makes edge_proto_header
+# trustworthy: a custom header is not overwritten by the ALB, so it can only be believed when
+# nothing but CloudFront can reach the listener.
+data "aws_ec2_managed_prefix_list" "cloudfront_origins" {
+  count = var.restrict_alb_to_cloudfront ? 1 : 0
+  name  = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  count             = var.restrict_alb_to_cloudfront ? 0 : 1
   security_group_id = aws_security_group.alb.id
-  description       = "HTTP from internet (pre-cutover; add 443 before production)"
+  description       = "HTTP from internet"
   ip_protocol       = "tcp"
   from_port         = 80
   to_port           = 80
   cidr_ipv4         = "0.0.0.0/0"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_http_cloudfront" {
+  count             = var.restrict_alb_to_cloudfront ? 1 : 0
+  security_group_id = aws_security_group.alb.id
+  description       = "HTTP from CloudFront origin-facing ranges only"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_all" {
