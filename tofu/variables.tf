@@ -192,3 +192,15 @@ variable "edge_proto_header" {
   default     = ""
   description = "Header CloudFront adds to ALB origin requests asserting the viewer used TLS. Point the portal's SECURE_PROXY_SSL_HEADER at the same name. Only set this with restrict_alb_to_cloudfront enabled, or it can be spoofed."
 }
+
+variable "alb_origin_domain" {
+  type    = string
+  default = ""
+
+  validation {
+    condition     = var.alb_origin_domain == "" || var.acm_certificate_arn != ""
+    error_message = "alb_origin_domain needs acm_certificate_arn: the ALB presents that certificate and CloudFront validates it against this name."
+  }
+
+  description = "Hostname resolving to this ALB and covered by acm_certificate_arn, e.g. origin.example.org. When set, the ALB gains an HTTPS listener and CloudFront reaches it over TLS at this name, so the ALB sets X-Forwarded-Proto itself and edge_proto_header is not needed. Must not also be a CloudFront alias."
+}
