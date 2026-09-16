@@ -12,7 +12,7 @@ resource "aws_security_group" "alb" {
 # trustworthy: a custom header is not overwritten by the ALB, so it can only be believed when
 # nothing but CloudFront can reach the listener.
 data "aws_ec2_managed_prefix_list" "cloudfront_origins" {
-  count = var.restrict_alb_to_cloudfront ? 1 : 0
+  count = var.restrict_alb_to_cloudfront || var.alb_origin_domain != "" ? 1 : 0
   name  = "com.amazonaws.global.cloudfront.origin-facing"
 }
 
@@ -44,6 +44,34 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_cloudfront" {
   # of a default 60. That is enough today and leaves little room, so a group carrying other rules
   # may need the quota raised.
   prefix_list_id = data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id
+}
+
+# CloudFront validates the origin certificate against the origin's domain name, which is the ELB
+# hostname unless a name you own points here. alb_origin_domain supplies that name so the wildcard
+# already issued for the portal can serve it, and the hop stops being plaintext.
+resource "aws_lb_listener" "https" {
+  count             = var.alb_origin_domain == "" ? 0 : 1
+  load_balancer_arn = aws_lb.this.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.acm_certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.portal.arn
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_https" {
+  count             = var.alb_origin_domain == "" ? 0 : 1
+  security_group_id = aws_security_group.alb.id
+  description       = var.restrict_alb_to_cloudfront ? "HTTPS from CloudFront origin-facing ranges only" : "HTTPS from internet"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  prefix_list_id    = var.restrict_alb_to_cloudfront ? data.aws_ec2_managed_prefix_list.cloudfront_origins[0].id : null
+  cidr_ipv4         = var.restrict_alb_to_cloudfront ? null : "0.0.0.0/0"
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_all" {
