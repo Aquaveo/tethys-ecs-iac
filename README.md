@@ -1,113 +1,65 @@
 # tethys-ecs-iac
 
-Reusable **OpenTofu** infrastructure-as-code for running a
-[Tethys Platform](https://www.tethysplatform.org/) portal on **AWS ECS Fargate** — stateless
-(external Postgres pooler, S3/CloudFront static+media, no EFS/Redis), env-neutral, parameterized per
-org/app. One root module stands up a whole portal; reuse it per portal via a `*.tfvars` file and a
-per-portal state key.
+Reusable **OpenTofu** module that runs one [Tethys Platform](https://www.tethysplatform.org/) portal
+on **AWS ECS Fargate**. It is stateless (external Postgres pooler, S3 + CloudFront for static/media, no
+EFS or Redis). Reuse it per portal with a `*.tfvars` file and a per-portal state key.
 
-> This repo previously shipped CloudFormation templates + a `put-secrets.sh` helper; both were removed
-> once everything moved to the OpenTofu module (`tofu/`) and CI-driven secrets. They remain in git
-> history if you ever need them.
+![Architecture](docs/architecture.png)
 
-## What it creates (`tofu/`)
-Cross-stack values (ALB DNS, CloudFront domain) are internal references — you don't pass them in:
-- `network.tf` — ALB, security groups, target group, HTTP listener
-- `roles.tf` — execution role (ECR/logs/SSM) + task role (S3 write)
-- `cluster.tf` — ECS cluster + log group
-- `static_cdn.tf` — S3 (static/media + geoglows cache lifecycle) + CloudFront (ALB default, S3 for
-  `/static` + `/media`) + OAC + bucket policy
-- `portal.tf` — task definition (init + web) + Fargate service
+| File (`tofu/`) | Creates |
+|---|---|
+| `network.tf` | ALB, listeners, target group, security groups |
+| `static_cdn.tf` | S3 bucket, CloudFront (ALB default, S3 for `/static/*` and `/media/*`), OAC |
+| `cluster.tf` | ECS cluster, log group |
+| `portal.tf` | `web` service and the one-shot `provision` task definition |
+| `roles.tf` | Execution role (ECR, logs, SSM) and task role (S3 write) |
 
-### Multiple domains on one distribution
-`portal_domain` is the primary alternate domain name. `portal_domain_aliases` adds more, in
-CloudFront form. A portal that routes tenants by subdomain uses it for the wildcard:
-
-```hcl
-portal_domain         = "portal.example.org"
-portal_domain_aliases = ["*.portal.example.org"]
-```
-
-The ACM certificate must cover every entry. CloudFront answers a `Host` that is not a configured
-alternate domain name with 403 CNAMEMismatch before the request reaches the ALB, so a subdomain is
-unreachable until it is listed here.
-
-The module does not derive Django's `ALLOWED_HOSTS` or `CSRF_TRUSTED_ORIGINS` from these aliases.
-Those need different spellings (a leading dot, and `https://*.`), and a portal declares them in its
-own `portal_config.yml`. Adding them to the task environment here would change the task definition of
-every portal, including portals that use no aliases.
+The diagram is generated from [`docs/architecture.py`](docs/architecture.py)
+(`uvx --with diagrams python docs/architecture.py`, needs Graphviz). Update it when the module changes.
 
 ## Prerequisites
-1. **State bucket** (e.g. `tethys-ecs-tofu-state-<account>`): an S3 bucket, versioned + encrypted.
-2. **Secrets in SSM** under `/<org>/<app>/*` — see [Secrets](#secrets) below. **Not** managed by
-   OpenTofu (no secrets in state).
-3. **ACM cert** in us-east-1 if you set `portal_domain` (validate it via DNS first). It must also
-   cover every entry in `portal_domain_aliases`.
-4. **OpenTofu >= 1.10** (uses native S3 state locking — no DynamoDB).
+- **OpenTofu >= 1.10** (native S3 state locking, no DynamoDB).
+- **State bucket** in S3, versioned and encrypted. Use one key per portal, e.g. `portals/acme.tfstate`.
+- **Secrets in SSM** under `/<org>/<app>/*` (see [Secrets](#secrets)). They are not managed by tofu.
+- **ACM cert in us-east-1** if you set `portal_domain`. It must cover every `portal_domain_aliases` entry.
 
 ## Usage
 ```bash
 cd tofu
-cp backend.hcl.example backend.hcl          # set bucket/region + a per-portal key
+cp backend.hcl.example backend.hcl                 # bucket, region, per-portal key
 cp examples/portal.tfvars.example acme.tfvars
 tofu init -backend-config=backend.hcl
-tofu plan  -var-file=acme.tfvars
 tofu apply -var-file=acme.tfvars
 ```
-After apply, point your DNS CNAME at the `cloudfront_domain` output, then push the portal image and
-re-`apply` with the new `image_uri`/`init_version`.
+Point your DNS CNAME at the `cloudfront_domain` output. `backend.hcl` and real `*.tfvars` are gitignored.
 
-### Local credentials (SSO gotcha)
-OpenTofu's AWS provider (Go SDK) does **not** auto-refresh AWS SSO tokens the way the AWS CLI does —
-running `tofu` against an SSO profile can fail with `ExpiredToken` even when `aws ... --profile` works.
-Hand tofu fresh credentials derived from the (refreshed) CLI profile:
-```bash
-aws sso login --sso-session <your-sso-session>
-eval "$(aws configure export-credentials --profile <your-sso-profile> --format env)"
-tofu plan -var-file=acme.tfvars
-```
-(In CI this is a non-issue — OIDC provides credentials directly as env vars.)
+**SSO:** the tofu AWS provider does not refresh SSO tokens. If you get `ExpiredToken`, export
+credentials first: `eval "$(aws configure export-credentials --profile <p> --format env)"`.
+
+**Extra domains:** list every hostname CloudFront should answer in `portal_domain_aliases`
+(e.g. `["*.portal.example.org"]`). Unlisted hosts get a 403 from CloudFront. Django's `ALLOWED_HOSTS`
+and `CSRF_TRUSTED_ORIGINS` for them belong in the portal's own `portal_config.yml`.
 
 ## Secrets
-Secrets are kept **out of tofu state** and **out of the image**. The flow is:
+GitHub Secrets → `sync-secrets` CI (OIDC) → SSM SecureStrings → injected into the ECS tasks at start.
+Nothing secret lands in tofu state or the image.
 
-```
-GitHub Secrets  ──(sync-secrets CI, OIDC)──>  SSM SecureStrings /<org>/<app>/*  ──>  ECS task (runtime)
-```
-
-Four parameters back the portal:
-
-| GitHub Secret | SSM param `/<org>/<app>/…` | Injected as | Purpose |
-|---|---|---|---|
-| `DB_PASSWORD` | `db-password` | `TETHYS_DB_PASSWORD` | database (Postgres pooler) password |
-| `PS_CONNECTION` | `ps-connection` | `TETHYS_PS_CONNECTION` | persistent-store connection string |
-| `SECRET_KEY` | `secret-key` | `TETHYS_SECRET_KEY` | Django `SECRET_KEY` (cookie/CSRF/token signing) |
-| `SUPERUSER_PASSWORD` | `portal-superuser-password` | `PORTAL_SUPERUSER_PASSWORD` | portal `admin` UI / Django-admin login |
-
-Set them as GitHub Secrets in the portal repo and run the **sync-secrets** workflow (template:
-[`examples/portal-ci/sync-secrets.yml`](examples/portal-ci/sync-secrets.yml)) — it writes them to SSM
-via OIDC. The ECS task reads them from SSM at runtime. Rotate by updating the GitHub Secret and
-re-running the workflow.
-
-> Notes: rotating `SECRET_KEY` logs everyone out (invalidates sessions + signed tokens). The
-> superuser is named `admin` (`PORTAL_SUPERUSER_NAME`) and is applied by the init container at boot.
-
-## State
-S3 backend with native locking (`use_lockfile = true`). One **key per portal** (e.g.
-`portals/acme-portal.tfstate`) so portals are isolated. `backend.hcl` and real `*.tfvars` are
-gitignored; only the `*.example` files are committed here.
-
-## Per-portal CI (templates)
-This repo stays **general** — it holds only the module + examples. Each **portal repo** owns its own
-`*.tfvars`, `backend.hcl`, and CI. Copy the kit in [`examples/portal-ci/`](examples/portal-ci/) into a
-new portal repo and fill in the placeholders:
-
-| Template | Goes to | Purpose |
+| GitHub Secret | SSM `/<org>/<app>/…` | Env var |
 |---|---|---|
-| `tofu-iam/` | `tofu-iam/` (apply once, admin creds) | OpenTofu for the OIDC CI roles (ECR push + tofu deploy) — no CloudFormation |
-| `tofu-deploy.yml` | `.github/workflows/` | `plan`/`apply` infra (checks out this module, uses the portal's tfvars/backend) |
-| `sync-secrets.yml` | `.github/workflows/` | push the portal's GitHub Secrets to SSM |
+| `DB_PASSWORD` | `db-password` | `TETHYS_DB_PASSWORD` |
+| `PS_CONNECTION` | `ps-connection` | `TETHYS_PS_CONNECTION` |
+| `SECRET_KEY` | `secret-key` | `TETHYS_SECRET_KEY` (rotating it logs everyone out) |
+| `SUPERUSER_PASSWORD` | `portal-superuser-password` | `PORTAL_SUPERUSER_PASSWORD` (`admin`, provision task only) |
 
-Repo settings each portal sets: secret `AWS_DEPLOY_ROLE_ARN` (role output), var `AWS_REGION`, plus the
-secret values. See [`geoglows/enee-geoglows-portal`](https://github.com/geoglows/enee-geoglows-portal)
-for a working example.
+## Per-portal CI
+This repo holds only the module. Each portal repo owns its tfvars, backend, and CI. Copy
+[`examples/portal-ci/`](examples/portal-ci/) into it:
+
+| Template | Purpose |
+|---|---|
+| `tofu-iam/` | OIDC roles for ECR push and tofu deploy (apply once with admin creds) |
+| `tofu-deploy.yml` | `tofu apply`, run the `provision` task, then roll the `web` service |
+| `sync-secrets.yml` | Push GitHub Secrets to SSM |
+
+Each portal sets the secret `AWS_DEPLOY_ROLE_ARN` and the variable `AWS_REGION`. Working example:
+[`geoglows/enee-geoglows-portal`](https://github.com/geoglows/enee-geoglows-portal).
