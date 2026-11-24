@@ -9,6 +9,32 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
 
+# CachingOptimized plus the media version parameters in the cache key
+resource "aws_cloudfront_cache_policy" "media" {
+  count       = length(var.media_cache_query_strings) > 0 ? 1 : 0
+  name        = "${local.name}-media"
+  min_ttl     = 1
+  default_ttl = 86400
+  max_ttl     = 31536000
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
+    cookies_config {
+      cookie_behavior = "none"
+    }
+    headers_config {
+      header_behavior = "none"
+    }
+    query_strings_config {
+      query_string_behavior = "whitelist"
+      query_strings {
+        items = var.media_cache_query_strings
+      }
+    }
+  }
+}
+
 # ---- S3 bucket for static + media (+ the geoglows cache prefix) ----
 resource "aws_s3_bucket" "static" {
   bucket = var.static_bucket_name
@@ -111,7 +137,7 @@ resource "aws_cloudfront_distribution" "this" {
     viewer_protocol_policy = "redirect-to-https"
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
-    cache_policy_id        = data.aws_cloudfront_cache_policy.optimized.id
+    cache_policy_id        = length(var.media_cache_query_strings) > 0 ? aws_cloudfront_cache_policy.media[0].id : data.aws_cloudfront_cache_policy.optimized.id
     compress               = true
   }
 

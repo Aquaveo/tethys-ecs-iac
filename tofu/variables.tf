@@ -204,3 +204,9 @@ variable "alb_origin_domain" {
 
   description = "Hostname resolving to this ALB and covered by acm_certificate_arn, e.g. origin.example.org. When set, the ALB gains an HTTPS listener and CloudFront reaches it over TLS at this name, so the ALB sets X-Forwarded-Proto itself and edge_proto_header is not needed. Must not also be a CloudFront alias."
 }
+
+variable "media_cache_query_strings" {
+  type        = list(string)
+  default     = ["v"]
+  description = "Query parameters in the /media/* cache key, so a versioned URL (tethysdash's ?v=) gets the new file. Empty keeps Managed-CachingOptimized."
+}
