@@ -40,6 +40,10 @@ credentials first: `eval "$(aws configure export-credentials --profile <p> --for
 (e.g. `["*.portal.example.org"]`). Unlisted hosts get a 403 from CloudFront. Django's `ALLOWED_HOSTS`
 and `CSRF_TRUSTED_ORIGINS` for them belong in the portal's own `portal_config.yml`.
 
+**Media caching:** `/media/*` is cached for a day, keyed on the `media_cache_query_strings`
+parameters (default `["v"]`), so a file rewritten under the same name and linked with a new `?v=`,
+as tethysdash does for thumbnails, is fetched fresh. Set `[]` for the managed CachingOptimized policy.
+
 ## Secrets
 GitHub Secrets → `sync-secrets` CI (OIDC) → SSM SecureStrings → injected into the ECS tasks at start.
 Nothing secret lands in tofu state or the image.
